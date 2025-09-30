@@ -1,455 +1,208 @@
-<!-----
-### Resumen breve
-Te doy todo listo para:
-- Generar automáticamente un JSON con metadata útil (nombre, url raw, tamaño, created_at, updated_at, último autor) usando una GitHub Action que hace commit de `media/list.json`.  
-- Un `index.html` que usa ese JSON para mostrar cards, búsqueda por nombre, filtros por tipo y rango de fechas, y contadores de vistas por recurso (local, sin servidor).  
 
-Copia y pega los archivos tal cual, ajusta las variables OWNER/REPO si quieres usar la API pública en cliente; pero con la Action no necesitas llamar a la API: el JSON ya tendrá las fechas y autor.
 
----
 
-### 1) GitHub Action: generar media/list.json con metadata
-Crea `.github/workflows/gen-media-list.yml` en tu repo:
-
-```yaml
-name: Generar media/list.json con metadata
-on:
-  push:
-    paths:
-      - 'media/**'
-      - '.github/workflows/gen-media-list.yml'
-jobs:
-  gen-list:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout completo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Generar media/list.json
-        run: |
-          set -e
-          DIR="media"
-          OUT="$DIR/list.json"
-          mkdir -p "$DIR"
-          # Si no hay archivos, escribir array vacío
-          files=$(find "$DIR" -maxdepth 1 -type f ! -name 'list.json' -printf "%f\n" | sort)
-          echo "[" > "$OUT"
-          first=true
-          for f in $files; do
-            # obtener tamaño en bytes
-            size=$(stat -c%s "$DIR/$f" || stat -f%z "$DIR/$f" || echo 0)
-            # last commit info (updated)
-            last_json=$(git log -n 1 --pretty=format:'{%n  "sha":"%H",%n  "author_name":"%an",%n  "author_email":"%ae",%n  "date":"%aI"%n}' -- "$DIR/$f" || echo "{}")
-            # first commit (creation) - buscar commit más antiguo que afecte el archivo
-            first_sha=$(git rev-list --reverse HEAD -- "$DIR/$f" | head -n 1 || true)
-            if [ -n "$first_sha" ]; then
-              first_json=$(git show -s --pretty=format:'{%n  "sha":"%H",%n  "author_name":"%an",%n  "author_email":"%ae",%n  "date":"%aI"%n}' $first_sha || echo "{}")
-            else
-              first_json="{}"
-            fi
-            # escape JSON-safe name
-            name=$(printf '%s' "$f" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read().strip())[1:-1])")
-            raw_url="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/$(git rev-parse --abbrev-ref HEAD)/media/$f"
-            # build object
-            obj=$(cat <<EOF
-{
-  "name": "$name",
-  "path": "media/$f",
-  "url": "$raw_url",
-  "size": $size,
-  "last_commit": $last_json,
-  "first_commit": $first_json
-}
-EOF
-)
-            if [ "$first" = true ]; then
-              echo "$obj" >> "$OUT"
-              first=false
-            else
-              echo "," >> "$OUT"
-              echo "$obj" >> "$OUT"
-            fi
-          done
-          echo "]" >> "$OUT"
-          # commit only if changed
-          git add "$OUT"
-          if ! git diff --cached --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit -m "chore: actualizar media/list.json (automático)"
-            git push
-          else
-            echo "Sin cambios en $OUT"
-          fi
-```
-
-Qué hace:
-- Escanea `media/` (archivo por archivo), obtiene tamaño, último commit (fecha y autor) y primer commit (fecha de creación aproximada) usando git local en el runner, construye `media/list.json` con objetos completos y hace commit si cambió.  
-- Resultado: `media/list.json` será un array de objetos listos para consumir en cliente.
-
----
-
-### 2) Ejemplo `media/list.json` esperado (ilustración)
-Cada elemento tendrá esta forma:
-
-```json
-[
-  {
-    "name": "video1.mp4",
-    "path": "media/video1.mp4",
-    "url": "https://raw.githubusercontent.com/usuario/repo/main/media/video1.mp4",
-    "size": 1234567,
-    "last_commit": {"sha":"...", "author_name":"Autor", "author_email":"a@e.com", "date":"2025-09-30T01:00:00Z"},
-    "first_commit": {"sha":"...", "author_name":"Autor", "author_email":"a@e.com", "date":"2025-09-01T12:00:00Z"}
-  }
-]
-```
-
----
-
-### 3) Front-end: `index.html` con cards, búsqueda y filtros por fecha/nombre/tipo y contadores locales
-Crea/actualiza `index.html` con este código (todo en un solo archivo). Guarda en la raíz del repo y úsalo en GitHub Pages.
-
-```html
--------->
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Galería multimedia</title>
-  <link rel="icon" href="favicon.ico">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Play Media</title>
+<style>
+  /* ====== RESET Y BASE ====== */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; font-family: sans-serif; background: #f3f4f6; }
+
+  /* ====== LAYOUT DESKTOP ====== */
+  .layout {
+    display: grid;
+    grid-template-columns: 25% 1fr 25%;
+    height: 100vh;
+  }
+  aside, main {
+    overflow-y: auto;
+    padding: 10px;
+  }
+  aside { background: #e5e7eb; }
+  main { background: #fff; }
+
+  /* ====== NAVBAR SUPERIOR ====== */
+  .navbar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 50px;
+    background: linear-gradient(90deg, #4f46e5, #3b82f6);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 15px;
+    z-index: 1000;
+  }
+  .navbar h1 { font-size: 1.2rem; }
+  .navbar button {
+    background: rgba(255,255,255,0.2);
+    border: none;
+    padding: 5px 10px;
+    color: white;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+
+  /* ====== MOBILE ====== */
+  @media (max-width: 768px) {
+    .layout {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto 1fr auto;
+    }
+    aside {
+      display: none; /* ocultar sidebars por defecto */
+    }
+    aside.active {
+      display: block;
+      position: fixed;
+      top: 50px;
+      bottom: 0;
+      width: 80%;
+      z-index: 999;
+    }
+    aside.left { left: 0; }
+    aside.right { right: 0; }
+  }
+
+  /* ====== IFRAMES ====== */
+  iframe {
+    width: 100%;
+    height: calc(100vh - 70px);
+    border: none;
+    background: white;
+  }
+</style>
+</head>
+<body>
+
+<!-- NAVBAR SUPERIOR -->
+<div class="navbar">
+  <button onclick="toggleSidebar('left')">☰</button>
+  <h1>Play Dayann</h1><a href="https://dayannaLuna2005.github.io/home">home</a>
+  <button onclick="toggleSidebar('right')">☰</button>
+</div>
+
+<!-- LAYOUT PRINCIPAL -->
+<div class="layout" style="padding-top:50px;">
+  <aside class="left">
+    
+  </aside>
+  <main>
+    
+  				<!--		<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Panel Local de Archivos</title>
   <style>
-    :root{--maxw:1100px;--gap:14px}
-    body{font-family:Inter,system-ui,Arial;margin:20px auto;max-width:var(--maxw);padding:0 12px;color:#111}
-    header{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
-    input[type="search"], select, input[type="date"]{padding:8px;border-radius:6px;border:1px solid #ddd}
-    .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-    .grid{display:flex;flex-wrap:wrap;gap:14px}
-    .card{width:320px;background:#fff;border:1px solid #eee;border-radius:10px;overflow:hidden;box-shadow:0 6px 18px rgba(10,10,10,.04)}
-    .preview{width:100%;height:180px;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden}
-    .preview img, .preview video{width:100%;height:100%;object-fit:cover;display:block}
-    .body{padding:10px}
-    .title{font-weight:600;font-size:15px;margin-bottom:6px;display:flex;justify-content:space-between;gap:8px}
-    .meta{font-size:12px;color:#666;display:flex;flex-direction:column;gap:4px}
-    .badges{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
-    .badge{background:#f2f4f7;padding:6px 8px;border-radius:999px;font-size:12px;color:#333}
-    .views{margin-left:auto;font-weight:700;color:#0b5cff}
-    .controls-right{margin-left:auto;display:flex;gap:8px}
-    .empty{padding:40px;text-align:center;color:#777}
-    @media(max-width:700px){.card{width:100%}.controls{flex-direction:column;align-items:stretch}.controls-right{margin-left:0}}
+    body { font-family: sans-serif; background: #f3f4f6; padding: 20px }
+    .control { margin-bottom: 20px }
+    .card { background: #fff; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,.1); padding: 20px; margin-bottom: 20px }
+    .file-item { border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; margin-top: 10px }
+    .file-item img, .file-item video { width: 100%; border-radius: 4px; margin-top: 10px }
   </style>
 </head>
 <body>
-  <header>
-    <h2 style="margin:0">Galería multimedia</h2>
-    <div class="controls" style="margin-left:8px">
-      <input id="q" type="search" placeholder="Buscar por nombre..." />
-      <select id="type">
-        <option value="all">Todos</option>
-        <option value="image">Imágenes</option>
-        <option value="video">Videos</option>
-        <option value="audio">Audio</option>
-      </select>
-      <label style="display:flex;align-items:center;gap:6px">
-        Desde <input id="dateFrom" type="date" />
-      </label>
-      <label style="display:flex;align-items:center;gap:6px">
-        Hasta <input id="dateTo" type="date" />
-      </label>
-      <div class="controls-right">
-        <button id="clear">Limpiar</button>
-      </div>
-    </div>
-  </header>
+  				-->
+  <h1>Mi Panel de Archivos</h1>
 
-  <main>
-    <div id="grid" class="grid"></div>
-    <div id="empty" class="empty" hidden>No hay archivos que coincidan.</div>
+  <div class="control">
+    <!-- Enfoque A: seleccionar carpeta local -->
+    <label>
+      Selecciona carpeta:
+      <input type="file" id="folderInput" webkitdirectory multiple>
+    </label>
+    <!-- Filtro rápido -->
+    <input type="text" id="search" placeholder="Filtrar por nombre o extensión">
+  </div>
 
-Add files via upload
-5 minutes ago
-Media-play.html
-Add files via upload
-5 minutes ago
-backend-sim-json.html
-Add files via upload
-5 minutes ago
-card-snnipet.html
-Add files via upload
-5 minutes ago
-cards-auto.html
-Add files via upload
-5 minutes ago
-ciencia.html
-Add files via upload
-5 minutes ago
-cruds-json-420lins.html
-Add files via upload
-5 minutes ago
-cruds-json.html
-Add files via upload
-5 minutes ago
-enterprise.html
-Add files via upload
-5 minutes ago
-expl-Reproductor.html
-Add files via upload
-5 minutes ago
-feed-left.html
-Add files via upload
-5 minutes ago
-feed-right.html
-Add files via upload
-5 minutes ago
-files-audio-video.html
-Add files via upload
-5 minutes ago
-gallery.html
-Add files via upload
-5 minutes ago
-hud.html
-Add files via upload
-5 minutes ago
-ia-chat.js
-Add files via upload
-5 minutes ago
-index.html
-Create index.html
-5 minutes ago
-instruc.html
-Add files via upload
-5 minutes ago
-main-feed.html
-Add files via upload
-5 minutes ago
-manifest-json.html
-Add files via upload
-5 minutes ago
-music.html
-Add files via upload
-5 minutes ago
-os-home-cruds.html
-Add files via upload
-5 minutes ago
-plantilla-copilot.html
-Add files via upload
-5 minutes ago
-profile.html
-Add files via upload
-5 minutes ago
-snippts.html
+  <div id="file-list"></div>
+  				<!--
+  <script src="app.js"></script>
+--->
 
-    
   </main>
+  <aside class="right">
+    <iframe src="otraVista.html"></iframe>
+  </aside>
+</div>
 
-  <script>
-    // CONFIG
-    const JSON_PATH = 'media/list.json'; // generado por la Action
-    // helpers
-    const extToType = ext => {
-      if (!ext) return 'other';
-      ext = ext.toLowerCase();
-      if (['jpg','jpeg','png','gif','webp','svg'].includes(ext)) return 'image';
-      if (['mp4','webm','ogg','mov','mkv'].includes(ext)) return 'video';
-      if (['mp3','wav','m4a','oga','flac'].includes(ext)) return 'audio';
-      return 'other';
+<script>
+  // Lógica para mostrar/ocultar sidebars en móvil
+  function toggleSidebar(side) {
+    const aside = document.querySelector(`aside.${side}`);
+    aside.classList.toggle('active');
+  }
+
+  // Centrar contenido aunque haya zoom
+  window.addEventListener('resize', centerLayout);
+  window.addEventListener('load', centerLayout);
+  function centerLayout() {
+    document.body.style.display = 'flex';
+    document.body.style.justifyContent = 'center';
+  }
+</script>
+				
+				<!--
+				-->
+				<script>
+				const folderInput = document.getElementById('folderInput');
+const searchInput = document.getElementById('search');
+const fileList = document.getElementById('file-list');
+
+let files = [];
+
+// Maneja selección de carpeta
+folderInput.addEventListener('change', e => {
+  files = Array.from(e.target.files).map(file => {
+    const type = file.type.startsWith('image/') ? 'image'
+               : file.type.startsWith('video/') ? 'video'
+               : file.type.startsWith('audio/') ? 'audio'
+               : 'document';
+    return {
+      name: file.name,
+      type,
+      url: URL.createObjectURL(file)
     };
+  });
+  renderFiles(files);
+});
 
-    // CONTADORES de vistas - simple, localStorage por archivo
-    function getViewsKey(path){ return 'views::' + path; }
-    function incView(path){
-      const k = getViewsKey(path);
-      const n = parseInt(localStorage.getItem(k) || '0', 10) + 1;
-      localStorage.setItem(k, String(n));
-      return n;
-    }
-    function getViews(path){
-      return parseInt(localStorage.getItem(getViewsKey(path)) || '0', 10);
-    }
+// Filtrado en tiempo real
+searchInput.addEventListener('input', () => {
+  const q = searchInput.value.toLowerCase();
+  renderFiles(files.filter(f => f.name.toLowerCase().includes(q)));
+});
 
-    // cargar JSON
-    async function load() {
-      try {
-        const res = await fetch(JSON_PATH, {cache: 'no-cache'});
-        if (!res.ok) throw new Error('No se encontró ' + JSON_PATH);
-        const arr = await res.json(); // array de objetos desde Action
-        window.MEDIA_LIST = arr.map(o => {
-          const name = o.name || o.path || '';
-          const ext = (name.split('.').pop() || '').toLowerCase();
-          const type = extToType(ext);
-          // prefer url desde JSON; si no existe, construir desde path
-          const url = o.url || (o.path ? ('https://raw.githubusercontent.com/' + location.hostname.split('.')[0] + location.pathname + '/' + o.path) : '');
-          const created = o.first_commit && o.first_commit.date ? o.first_commit.date : null;
-          const updated = o.last_commit && o.last_commit.date ? o.last_commit.date : null;
-          const author = o.last_commit && o.last_commit.author_name ? o.last_commit.author_name : (o.first_commit && o.first_commit.author_name ? o.first_commit.author_name : '');
-          return { name, path: o.path || '', url, size: o.size||0, type, created, updated, author };
-        });
-        render(window.MEDIA_LIST);
-        setupControls();
-      } catch (err) {
-        document.getElementById('grid').innerHTML = '<div class="empty">Error cargando media: ' + err.message + '</div>';
-        console.error(err);
-      }
-    }
+// Función para mostrar tarjetas
+function renderFiles(list) {
+  fileList.innerHTML = '';
+  list.forEach(f => {
+    const div = document.createElement('div');
+    div.className = 'card file-item';
+    let inner = `<p><strong>Nombre:</strong> ${f.name}</p><p><strong>Tipo:</strong> ${f.type}</p>`;
 
-    function render(list) {
-      const grid = document.getElementById('grid');
-      grid.innerHTML = '';
-      if (!list || list.length === 0) {
-        document.getElementById('empty').hidden = false;
-        return;
-      }
-      document.getElementById('empty').hidden = true;
-      list.forEach(item => {
-        const card = document.createElement('div'); card.className = 'card';
-        // preview container
-        const preview = document.createElement('div'); preview.className = 'preview';
-        if (item.type === 'image') {
-          const img = document.createElement('img'); img.src = item.url; img.alt = item.name;
-          img.loading = 'lazy';
-          img.addEventListener('click', () => { const n = incView(item.path); updateViewsEl(card, n); openLightbox(item); });
-          preview.appendChild(img);
-        } else if (item.type === 'video') {
-          const vid = document.createElement('video'); vid.src = item.url; vid.preload = 'metadata'; vid.muted = true; vid.playsInline = true;
-          vid.addEventListener('click', () => { vid.paused ? vid.play() : vid.pause(); });
-          // cuando se reproduzca contar vista
-          vid.addEventListener('play', () => { const n = incView(item.path); updateViewsEl(card, n); });
-          preview.appendChild(vid);
-        } else if (item.type === 'audio') {
-          const placeholder = document.createElement('div'); placeholder.style.width='100%'; placeholder.style.padding='18px'; placeholder.style.background='#111'; placeholder.style.color='#fff'; placeholder.style.display='flex'; placeholder.style.justifyContent='center'; placeholder.style.alignItems='center';
-          const play = document.createElement('button'); play.textContent = 'Play audio'; play.style.padding='8px 12px';
-          const audio = document.createElement('audio'); audio.src = item.url;
-          play.addEventListener('click', () => { audio.paused ? audio.play() : audio.pause(); const n = incView(item.path); updateViewsEl(card, n); });
-          placeholder.appendChild(play); preview.appendChild(placeholder); preview.appendChild(audio);
-        } else {
-          const p = document.createElement('div'); p.style.padding='12px'; p.textContent = 'Archivo: ' + item.name;
-          preview.appendChild(p);
-        }
-        card.appendChild(preview);
+    if (f.type === 'image')
+      inner += `<img src="${f.url}" alt="${f.name}">`;
+    else if (f.type === 'video')
+      inner += `<video controls src="${f.url}"></video>`;
+    else if (f.type === 'audio')
+      inner += `<audio controls src="${f.url}"></audio>`;
+    else
+      inner += `<a href="${f.url}" target="_blank">Abrir documento</a>`;
 
-        // body
-        const body = document.createElement('div'); body.className = 'body';
-        const title = document.createElement('div'); title.className='title';
-        const left = document.createElement('div'); left.textContent = item.name;
-        const viewsEl = document.createElement('div'); viewsEl.className = 'views'; viewsEl.textContent = getViews(item.path);
-        title.appendChild(left); title.appendChild(viewsEl);
-        body.appendChild(title);
+    div.innerHTML = inner;
+    fileList.appendChild(div);
+  });
+}
 
-        const meta = document.createElement('div'); meta.className='meta';
-        const line1 = document.createElement('div'); line1.textContent = 'Tipo: ' + item.type + ' • Tamaño: ' + formatBytes(item.size);
-        const line2 = document.createElement('div'); line2.textContent = 'Última modificación: ' + (item.updated ? new Date(item.updated).toLocaleString() : '—');
-        const line3 = document.createElement('div'); line3.textContent = 'Creado: ' + (item.created ? new Date(item.created).toLocaleDateString() : '—') + (item.author ? ' • Autor: ' + item.author : '');
-        meta.appendChild(line1); meta.appendChild(line2); meta.appendChild(line3);
-        body.appendChild(meta);
+				</script>
 
-        // badges / acciones
-        const badges = document.createElement('div'); badges.className='badges';
-        const open = document.createElement('a'); open.href=item.url; open.target='_blank'; open.rel='noopener'; open.className='badge'; open.textContent='Abrir';
-        badges.appendChild(open);
-        body.appendChild(badges);
-
-        card.appendChild(body);
-        grid.appendChild(card);
-
-        // helper to update views number
-        function updateViewsEl(el, n){ el.querySelector('.views').textContent = n; }
-      });
-    }
-
-    // UI controls
-    function setupControls(){
-      const q = document.getElementById('q');
-      const type = document.getElementById('type');
-      const dateFrom = document.getElementById('dateFrom');
-      const dateTo = document.getElementById('dateTo');
-      const clear = document.getElementById('clear');
-
-      function applyFilters(){
-        const term = q.value.trim().toLowerCase();
-        const t = type.value;
-        const from = dateFrom.value ? new Date(dateFrom.value) : null;
-        const to = dateTo.value ? new Date(dateTo.value) : null;
-        const filtered = (window.MEDIA_LIST || []).filter(it => {
-          if (t !== 'all' && it.type !== t) return false;
-          if (term && !it.name.toLowerCase().includes(term)) return false;
-          const created = it.created ? new Date(it.created) : null;
-          const updated = it.updated ? new Date(it.updated) : null;
-          const refDate = updated || created;
-          if (from && refDate && refDate < from) return false;
-          if (to && refDate && refDate > new Date(to.getFullYear(), to.getMonth(), to.getDate(), 23,59,59)) return false;
-          return true;
-        });
-        document.getElementById('grid').innerHTML = '';
-        render(filtered);
-      }
-      q.addEventListener('input', debounce(applyFilters, 180));
-      type.addEventListener('change', applyFilters);
-      dateFrom.addEventListener('change', applyFilters);
-      dateTo.addEventListener('change', applyFilters);
-      clear.addEventListener('click', () => { q.value=''; type.value='all'; dateFrom.value=''; dateTo.value=''; applyFilters(); });
-    }
-
-    // tiny helpers
-    function formatBytes(bytes){
-      if (!bytes) return '0 B';
-      const sizes = ['B','KB','MB','GB','TB'];
-      const i = Math.floor(Math.log(bytes)/Math.log(1024));
-      return (bytes/Math.pow(1024,i)).toFixed(i?1:0) + ' ' + sizes[i];
-    }
-    function debounce(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
-
-    // simple lightbox for images/videos
-    function openLightbox(item){
-      const wrap = document.createElement('div');
-      wrap.style.position='fixed';wrap.style.inset=0;wrap.style.background='rgba(0,0,0,.85)';wrap.style.display='flex';wrap.style.alignItems='center';wrap.style.justifyContent='center';wrap.style.zIndex=9999;
-      const inner = document.createElement('div'); inner.style.maxWidth='90%'; inner.style.maxHeight='90%';
-      if (item.type === 'image'){
-        const img = document.createElement('img'); img.src=item.url; img.style.maxWidth='100%'; img.style.maxHeight='100%'; inner.appendChild(img);
-      } else if (item.type === 'video'){
-        const v = document.createElement('video'); v.src=item.url; v.controls=true; v.autoplay=true; v.style.maxWidth='100%'; v.style.maxHeight='100%'; inner.appendChild(v);
-        v.addEventListener('play', ()=> incView(item.path));
-      }
-      wrap.appendChild(inner);
-      wrap.addEventListener('click', ()=> wrap.remove());
-      document.body.appendChild(wrap);
-    }
-
-    // iniciar
-    load();
-  </script>
 </body>
 </html>
-<!-------
-
-Qué incluye:
-- Cards con preview, título, autor, fecha de creación (first_commit.date), última modificación (last_commit.date), y tamaño.  
-- Filtros: por tipo (imagen/video/audio), búsqueda por nombre y filtro por rango de fechas (usa created/updated desde el JSON).  
-- Contadores de vistas implementados con localStorage (funcionan por navegador; incrementan cuando se reproduce/abre cada recurso).  
-- Lightbox simple para imágenes y videos que incrementa la vista al abrir/reproducir.
-
----
-
-### 4) Sobre contadores globales (recuento real de visitantes)
-- El contador que te puse es local (por navegador) y funciona sin servidor.  
-- Para contar visitas globales por recurso necesitas un backend o servicio (Firebase, Netlify Functions, Supabase, o una pequeña API) que registre eventos y devuelva el conteo. Si quieres, te doy un ejemplo con Supabase o una función serverless para llevar conteos reales.
-
----
-
-### 5) Favicon y pequeños toques
-- Añade `favicon.ico` en la raíz y el <link rel="icon" href="favicon.ico"> ya incluido en `index.html`.  
-- Si quieres mostrar nombre de usuario (uploader) y texto fijo, el JSON ya incluye `first_commit.author_name` y `last_commit.author_name`; el Action lo pone en `first_commit` y `last_commit` y el front usa `last_commit.author_name` como “author”.
-
----
-
-### 6) Siguientes pasos sugeridos
-- Añade la Action y haz push con la carpeta `media/` llena; revisa que `media/list.json` se haya creado y contenga los objetos.  
-- Abre `index.html` en GitHub Pages (user.github.io/repo/) y verifica filtros, búsquedas y contadores.  
-- Si quieres contadores globales, dime qué servicio prefieres (Supabase, Firebase, Netlify Functions) y te doy la integración lista.
-
-¿Quieres que ahora te entregue la versión del front con filtros avanzados (ordenar por fecha/tamaño, paginación y filtros múltiples) o que te arme la integración de conteos globales con Supabase?
-Name	Last commit message	Last commit date
-..
-.804c9a5b09dc1e99aefe17dd530290c3 
