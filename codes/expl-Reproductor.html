@@ -1,0 +1,228 @@
+
+
+<!----
+
+### Resumen rápido
+- Te doy 3 cosas listas para copiar/pegar:
+  1. Un `index.html` que primero intenta leer `media/list.json` y, si no existe, consulta la API pública de GitHub para listar la carpeta `media/` de tu repo (funciona para repos públicos) y construye la galería (imágenes, audio, video).  
+  2. Un GitHub Action (YAML) que genera automáticamente `media/list.json` en cada push (útil si subes muchísima media).  
+  3. Cómo añadir un favicon (ícono de pestaña) y notas sobre URLs raw/download y usos.  
+
+---
+
+### 1. index.html (cliente: usa JSON local o GitHub API pública)
+Copia esto como `index.html` en la raíz del repo (o donde lo quieras servir desde GitHub Pages). Cambia las variables OWNER y REPO por tus valores.
+
+```html
+----></!---->
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Galería multimedia</title>
+  <link rel="icon" href="favicon.ico">
+  <style>
+    :root{--maxw:980px;--gap:12px}
+    body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:18px auto;max-width:var(--maxw);padding:0 12px}
+    h1{text-align:center;margin-bottom:12px}
+    .grid{display:flex;flex-wrap:wrap;gap:var(--gap);justify-content:center}
+    .card{width:calc(33% - var(--gap));min-width:200px;background:#fafafa;padding:10px;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,.06)}
+    img,video,audio{width:100%;height:auto;border-radius:6px;display:block}
+    .caption{font-size:13px;margin-top:8px;color:#222;word-break:break-word}
+    @media(max-width:800px){.card{width:calc(50% - var(--gap))}}
+    @media(max-width:420px){.card{width:100%}}
+  </style>
+</head>
+<body>
+  <h1>Galería multimedia</h1>
+  <div id="grid" class="grid">Cargando…</div>
+
+  <script>
+    // CONFIGURA ESTO
+    const OWNER = 'TU_USUARIO';    // ejemplo: "usuario"
+    const REPO  = 'TU_REPO';       // ejemplo: "mi-web"
+    const PATH  = 'media';         // carpeta en el repo donde está la media
+    const baseLocal = PATH + '/';  // para cuando uses list.json local
+
+    // Lógica: intenta cargar media/list.json; si falla, consulta la API pública de GitHub
+    async function cargar() {
+      const grid = document.getElementById('grid');
+      grid.textContent = 'Cargando lista de archivos…';
+
+      // 1) Intentar JSON local
+      try {
+        const res = await fetch(baseLocal + 'list.json', {cache: 'no-cache'});
+        if (res.ok) {
+          const arr = await res.json();
+          if (!Array.isArray(arr)) throw new Error('list.json no es un array');
+          render(arr.map(n => ({name: n, url: baseLocal + n})));
+          return;
+        }
+      } catch(e) {
+        // no hacer nada aquí: caemos a la GitHub API
+      }
+
+      // 2) Usar GitHub API pública para listar la carpeta (solo repos públicos)
+      try {
+        const apiUrl = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${PATH}`;
+        const r = await fetch(apiUrl, {cache: 'no-cache'});
+        if (!r.ok) throw new Error('No se puede listar la carpeta en GitHub API: ' + r.status);
+        const items = await r.json(); // array de objetos
+        const files = items
+          .filter(i => i.type === 'file')
+          .map(i => ({name: i.name, url: i.download_url || i.html_url}));
+        if (files.length === 0) throw new Error('No se encontraron archivos en ' + PATH);
+        render(files);
+      } catch (err) {
+        grid.innerHTML = `<p>Error cargando archivos: ${err.message}</p>`;
+      }
+    }
+
+    // Renderiza cards según extensión
+    function render(files) {
+      const grid = document.getElementById('grid');
+      grid.innerHTML = '';
+      files.forEach(f => {
+        const ext = (f.name.split('.').pop() || '').toLowerCase();
+        const card = document.createElement('div');
+        card.className = 'card';
+
+        if (['jpg','jpeg','png','gif','webp','svg'].includes(ext)) {
+          const img = document.createElement('img');
+          img.src = f.url;
+          img.alt = f.name;
+          card.appendChild(img);
+        } else if (['mp4','webm','ogg'].includes(ext)) {
+          const v = document.createElement('video');
+          v.src = f.url;
+          v.controls = true;
+          v.preload = 'metadata';
+          card.appendChild(v);
+        } else if (['mp3','wav','m4a','oga'].includes(ext)) {
+          const a = document.createElement('audio');
+          a.src = f.url;
+          a.controls = true;
+          card.appendChild(a);
+        } else {
+          const p = document.createElement('div');
+          p.textContent = 'Archivo (descargar):';
+          const link = document.createElement('a');
+          link.href = f.url;
+          link.target = '_blank';
+          link.rel = 'noopener';
+          link.textContent = f.name;
+          p.appendChild(document.createTextNode(' '));
+          p.appendChild(link);
+          card.appendChild(p);
+        }
+
+        const cap = document.createElement('div');
+        cap.className = 'caption';
+        cap.textContent = f.name;
+        card.appendChild(cap);
+
+        grid.appendChild(card);
+      });
+    }
+
+    cargar();
+  </script>
+</body>
+</html>
+				<!----
+
+Notas rápidas sobre este HTML:
+- Primero intenta `media/list.json` (local). Si existe y contiene un array de nombres, lo usa (útil con Action).
+- Si no hay JSON, consulta la GitHub API pública: `https://api.github.com/repos/OWNER/REPO/contents/media` y usa `download_url` para mostrar los archivos (esto funciona para repos públicos).
+- Si tu repo es privado necesitarás un token (no incluido aquí, pues en Pages público no es posible guardar credenciales en cliente).
+
+---
+
+### 2. GitHub Action: genera media/list.json automáticamente
+Crea en tu repo `.github/workflows/gen-media-list.yml`. Esta Action escanea la carpeta `media/`, crea/actualiza `media/list.json` con los nombres y hace commit si hay cambios.
+
+```yaml
+name: Generar list.json de media
+on:
+  push:
+    paths:
+      - 'media/**'
+      - '.github/workflows/gen-media-list.yml'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Crear list.json
+        run: |
+          DIR=media
+          OUT="$DIR/list.json"
+          if [ ! -d "$DIR" ]; then
+            echo "[]" > "$OUT"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add "$OUT"
+            git commit -m "chore: crear media/list.json (vacío)" || true
+            git push || true
+            exit 0
+          fi
+          # Encontrar archivos (excluir list.json)
+          find "$DIR" -maxdepth 1 -type f ! -name 'list.json' -printf "%f\n" | sort > /tmp/_media_files.txt
+          jq -R -s -c 'split("\n")[:-1]' /tmp/_media_files.txt > "$OUT"
+          # commit si hay cambios
+          git add "$OUT"
+          if ! git diff --cached --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore: actualizar media/list.json"
+            git push
+          else
+            echo "Sin cambios en list.json"
+          fi
+```
+
+Cómo funciona:
+- Se dispara en cada push que afecte `media/**`.
+- Genera un array JSON con los nombres de archivos en `media/` (sin rutas).
+- Hace commit y push del `media/list.json` si cambió.
+- Así tu `index.html` puede usar siempre ese JSON y no hace falta consultar GitHub API.
+
+---
+
+### 3. Raw URLs, download_url y vistas previas
+- GitHub ofrece `download_url` en la respuesta de la API; ese URL entrega el archivo crudo (raw) listo para usar como src en <img>, <video>, <audio>. Es la forma correcta para enlazar contenido servido desde GitHub.
+- `raw.githubusercontent.com` también funciona: es el host detrás de `download_url`. Ambos sirven el archivo crudo, no la página HTML del repo.
+- En la interfaz web de GitHub puedes ver previsualizaciones, pero para reproducir en tu web usa `download_url` (lo que hace el código anterior).
+
+---
+
+### 4. Favicon (ícono de pestaña)
+- Crea un archivo pequeño `favicon.ico` (o `favicon.png`) y colócalo en la raíz del repo (o la ruta que prefieras).  
+- En tu <head> ya incluí: <link rel="icon" href="favicon.ico">  
+- Para varios tamaños o compatibilidad, añade:
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+
+---
+
+### 5. Respuestas a tus preguntas sueltas (rápido)
+- ¿Se genera solo el JSON? Sí: con el Action anterior se actualiza `media/list.json` en cada push (automatizado).  
+- ¿Puedo usar GitHub como "backend"? Sí: la API pública te permite listar archivos si el repo es público; o bien el Action genera el JSON para que el cliente lo use.  
+- ¿Front-end es user.github.io/repo/? Sí, ese será tu sitio GitHub Pages si configuras Pages para la rama main y carpeta /root.  
+- ¿Solo le pones el link del documento al reproductor? Sí, los elementos <img>, <video>, <audio> aceptan un src con la URL raw o download_url y reproducen/visualizan el contenido.
+
+---
+
+### 6. Siguientes pasos recomendados (elige uno)
+- Activar el Action y probar subiendo una carpeta con muchos archivos para confirmar que `media/list.json` se actualiza.  
+- Probar `index.html` localmente (o subiéndolo a Pages) cambiando OWNER/REPO antes de usar la API pública.  
+- Si quieres, te doy una versión con filtros (por tipo), búsqueda y lightbox para imagenes/video.
+
+Dime si quieres que:
+1. Configure el Action para ignorar ciertos tipos (por ejemplo archivos > X MB).  
+2. Te dé la versión con lightbox y filtros listos para copiar.

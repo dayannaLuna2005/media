@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Galería multimedia</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Arial;max-width:900px;margin:24px auto;padding:0 12px}
+    .grid{display:flex;flex-wrap:wrap;gap:12px}
+    .card{width:calc(33% - 8px);min-width:180px;background:#f8f8f8;padding:8px;border-radius:8px}
+    img,video,audio{width:100%;height:auto;border-radius:6px;display:block}
+    .caption{font-size:13px;margin-top:6px;color:#333}
+  </style>
+</head>
+<body>
+  <h3>Galería multimedia</h3>
+  <div id="grid" class="grid"></div>
+
+  <script>
+    const base = './media/'; // ruta base dentro del repo donde esté la carpeta media
+    async function loadList() {
+      try {
+        const res = await fetch(base + 'list.json', {cache: 'no-cache'});
+        if (!res.ok) throw new Error('No se encontró media/list.json');
+        const list = await res.json();
+        render(list);
+      } catch (err) {
+        document.getElementById('grid').innerHTML = '<p>Error cargando lista: ' + err.message + '</p>';
+      }
+    }
+
+    function render(items) {
+      const grid = document.getElementById('grid');
+      grid.innerHTML = '';
+      items.forEach(path => {
+        const ext = path.split('.').pop().toLowerCase();
+        const card = document.createElement('div');
+        card.className = 'card';
+
+        if (['jpg','jpeg','png','gif','webp','svg'].includes(ext)) {
+          const img = document.createElement('img');
+          img.src = base + path;
+          img.alt = path;
+          card.appendChild(img);
+        } else if (['mp4','webm','ogg'].includes(ext)) {
+          const vid = document.createElement('video');
+          vid.src = base + path;
+          vid.controls = true;
+          vid.preload = 'metadata';
+          card.appendChild(vid);
+        } else if (['mp3','wav','ogg'].includes(ext)) {
+          const aud = document.createElement('audio');
+          aud.src = base + path;
+          aud.controls = true;
+          card.appendChild(aud);
+        } else {
+          const p = document.createElement('div');
+          p.textContent = 'Formato no soportado: ' + path;
+          card.appendChild(p);
+        }
+
+        const cap = document.createElement('div');
+        cap.className = 'caption';
+        cap.textContent = path;
+        card.appendChild(cap);
+
+        grid.appendChild(card);
+      });
+    }
+
+    loadList();
+  </script>
+
+				<script>
+				async function loadFromGitHub(owner, repo, path) {
+  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Fallo GitHub API: ' + res.status);
+  const data = await res.json(); // array de objetos
+  // crear array con download_url de archivos soportados
+  return data
+    .filter(e => e.type === 'file')
+    .map(e => e.download_url)
+    .filter(u => u); 
+}
+
+				</script>
+								
+								
+</body>
+</html>

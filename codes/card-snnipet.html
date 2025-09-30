@@ -1,0 +1,358 @@
+
+
+
+
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Plantilla OHANA - All in one</title>
+<style>
+  /* RESET / BASE */
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;font-family:Inter,Segoe UI,Arial,sans-serif;background:#f3f4f6;color:#111}
+  a{color:inherit}
+  button{cursor:pointer}
+
+  /* NAVBAR */
+  .navbar{
+    position:fixed;top:0;left:0;right:0;height:56px;
+    background:linear-gradient(90deg,#4f46e5,#3b82f6);
+    color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 14px;z-index:1200;
+    box-shadow:0 6px 18px rgba(50,50,93,0.12)
+  }
+  .nav-left{display:flex;gap:8px;align-items:center}
+  .brand{font-weight:700}
+  .nav-actions{display:flex;gap:8px;align-items:center}
+
+  /* LAYOUT */
+  .frame{display:grid;grid-template-columns:260px 1fr 320px;gap:18px;padding:72px 18px 18px 18px;min-height:100vh}
+  aside{background:#fff;border-radius:12px;padding:12px;box-shadow:0 6px 18px rgba(16,24,40,.06);overflow:auto}
+  main{background:#fff;border-radius:12px;padding:12px;box-shadow:0 6px 18px rgba(16,24,40,.06);overflow:auto}
+
+  /* SIDEBAR CONTENT */
+  .menu-title{font-weight:700;margin-bottom:8px;color:#0f172a}
+  .file-list, .crud-list{display:flex;flex-direction:column;gap:10px}
+
+  /* MEDIA GRID */
+  .controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+  .card{background:#f9fafb;border-radius:10px;overflow:hidden;display:flex;flex-direction:column;max-height:420px}
+  .card-media{flex:1 1 auto;overflow:auto;background:#111}
+  .card-media img,.card-media video, .card-media iframe{width:100%;height:auto;display:block}
+  .card-body{padding:10px;background:#fff;border-top:1px solid #eef2f7;flex-shrink:0}
+  .card-body p{font-size:13px;margin-bottom:6px;color:#0f172a}
+  .snippet{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#f1f5f9;padding:8px;border-radius:6px;font-size:12px;white-space:pre-wrap;overflow:auto;max-height:100px}
+
+  /* REPO SNIPPET / BUTTONS */
+  .row{display:flex;gap:8px;align-items:center}
+  .small-btn{padding:6px 8px;border-radius:6px;border:1px solid #e6edf3;background:#fff}
+  .primary{background:#3b82f6;color:#fff;border:none}
+
+  /* SEARCH */
+  .search{width:100%;padding:8px;border-radius:8px;border:1px solid #e6edf3}
+
+  /* FOOTER */
+  footer{padding:8px;text-align:center;color:#64748b;font-size:13px}
+
+  /* MOBILE */
+  @media (max-width:900px){
+    .frame{grid-template-columns:1fr;padding:72px 12px 12px 12px}
+    aside.left, aside.right{display:none;position:fixed;top:56px;bottom:0;width:76%;z-index:1400;box-shadow:0 20px 40px rgba(2,6,23,0.2)}
+    aside.left.active, aside.right.active{display:block}
+    .card{max-height:none}
+    iframe.embedded{height:60vh;width:100%;border-radius:10px;border:1px solid #e6edf3}
+  }
+
+  /* helpers */
+  .muted{color:#6b7280;font-size:13px}
+  .meta{font-size:12px;color:#475569}
+  .badge{font-size:11px;background:#eef2ff;padding:4px 6px;border-radius:6px;color:#0f172a}
+</style>
+</head>
+<body>
+
+<!-- NAVBAR -->
+<div class="navbar">
+  <div class="nav-left">
+    <button id="openLeft" class="small-btn">☰</button>
+    <div class="brand">OHANA • Panel</div>
+    <div class="muted" style="margin-left:8px">Gestor multimedia</div>
+  </div>
+
+  <div class="nav-actions">
+    <input id="globalSearch" class="search" placeholder="Buscar por nombre o extensión..." />
+    <button id="openRight" class="small-btn">☰</button>
+  </div>
+</div>
+
+<!-- LAYOUT PRINCIPAL -->
+<div class="frame">
+
+  <!-- LEFT SIDEBAR -->
+  <aside class="left" id="leftSidebar">
+    <div class="menu-title">Herramientas</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <label class="muted">Seleccionar archivos</label>
+      <input id="fileInput" type="file" multiple accept="image/*,video/*,audio/*,.pdf,.html" />
+      <label class="muted">Seleccionar carpeta (Android/PC)</label>
+      <input id="folderInput" type="file" webkitdirectory multiple />
+      <div style="display:flex;gap:6px;align-items:center">
+        <button id="sortOld" class="small-btn">Orden: más antiguo</button>
+        <button id="sortNew" class="small-btn">Orden: más nuevo</button>
+      </div>
+      <label class="muted">Filtrar por tipo</label>
+      <div style="display:flex;gap:6px">
+        <button data-filter="all" class="small-btn">Todos</button>
+        <button data-filter="image" class="small-btn">Imágenes</button>
+        <button data-filter="video" class="small-btn">Videos</button>
+        <button data-filter="audio" class="small-btn">Audios</button>
+        <button data-filter="doc" class="small-btn">Docs</button>
+      </div>
+    </div>
+
+    <hr style="margin:12px 0;border:none;border-top:1px solid #eef2f7" />
+    <div class="menu-title">Archivos detectados</div>
+    <div id="fileSummary" class="muted">No hay archivos aún</div>
+    <div style="height:12px"></div>
+    <div class="menu-title">Quick list</div>
+    <div id="quickList" class="file-list muted"></div>
+  </aside>
+
+  <!-- MAIN -->
+  <main>
+    <h2 style="margin-bottom:8px">Media Cards Automáticas</h2>
+    <p class="muted" style="margin-bottom:12px">Selecciona archivos o carpetas; aquí se generan cards + snippets para GitHub Pages (/nombre.ext) y para vista local (blob URL)</p>
+
+    <div class="controls">
+      <label class="muted">Buscar rápido</label>
+      <input id="filterInput" class="search" placeholder="Filtrar tarjeta por nombre o año (2017)..." />
+    </div>
+
+    <div id="mediaGrid" class="grid" aria-live="polite"></div>
+  </main>
+
+  <!-- RIGHT SIDEBAR -->
+  <aside class="right" id="rightSidebar">
+    <div class="menu-title">Snippet Generator (texto)</div>
+    <p class="muted">Escribe nombre o pega ruta tal cual para generar bloque listo para copiar (usa /nombre.ext para GitHub)</p>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <input id="manualInput" placeholder="imagen.png o /imagen.png" style="flex:1;padding:8px;border-radius:6px;border:1px solid #eef2f7" />
+      <button id="genManual" class="small-btn primary">Generar</button>
+    </div>
+    <div style="margin-bottom:8px"><textarea id="manualOutput" readonly class="snippet" placeholder="Snippet generado"></textarea></div>
+
+    <hr style="margin:12px 0;border:none;border-top:1px solid #eef2f7" />
+    <div class="menu-title">Mini vista previa</div>
+    <div id="miniPreview" class="muted">Aquí aparecerá el snippet o vista al elegir un item</div>
+    <hr style="margin:12px 0;border:none;border-top:1px solid #eef2f7" />
+    <div class="menu-title">Notas</div>
+    <div class="muted">El navegador NO puede escanear todo /storage/emulated/0 sin tu interacción. Usa "Seleccionar carpeta" para elegir DCIM, Downloads, etc.</div>
+  </aside>
+
+</div>
+
+<footer>
+  <small>OHANA - Panel • local preview + repo snippets • © <?= new Date().getFullYear ? new Date().getFullYear() : '2025' ?></small>
+</footer>
+
+<script>
+  /* ====== CONSTANTES y ESTADOS ====== */
+  const IMG_EXT = ['jpg','jpeg','png','gif','webp','heic','heif'];
+  const VID_EXT = ['mp4','webm','ogg','mov','mkv'];
+  const AUD_EXT = ['mp3','wav','aac','ogg','m4a'];
+  const IFR_EXT = ['pdf','html','htm'];
+
+  const fileInput = document.getElementById('fileInput');
+  const folderInput = document.getElementById('folderInput');
+  const mediaGrid = document.getElementById('mediaGrid');
+  const quickList = document.getElementById('quickList');
+  const fileSummary = document.getElementById('fileSummary');
+  const filterInput = document.getElementById('filterInput');
+  const globalSearch = document.getElementById('globalSearch');
+  const manualInput = document.getElementById('manualInput');
+  const manualOutput = document.getElementById('manualOutput');
+  const miniPreview = document.getElementById('miniPreview');
+  const leftSidebar = document.getElementById('leftSidebar');
+  const rightSidebar = document.getElementById('rightSidebar');
+
+  let allItems = []; // {name, ext, blobUrl, file?, repoPath, lastModified, nameDate, type}
+
+  /* ====== HELPERS ====== */
+  function extOf(name){ return (name.split('.').pop()||'').toLowerCase(); }
+  function typeOf(ext){
+    if(IMG_EXT.includes(ext)) return 'image';
+    if(VID_EXT.includes(ext)) return 'video';
+    if(AUD_EXT.includes(ext)) return 'audio';
+    if(IFR_EXT.includes(ext)) return 'iframe';
+    return 'document';
+  }
+  function extractYearFromName(name){
+    const m = name.match(/(19|20)\d{2}/);
+    return m ? m[0] : null;
+  }
+  function makeRepoPath(name){ return '/' + name; }
+
+  /* ====== RENDER CARD ====== */
+  function createCard(item){
+    const card = document.createElement('div'); card.className='card';
+    const mediaWrapper = document.createElement('div'); mediaWrapper.className='card-media';
+
+    // media element
+    if(item.type==='image'){
+      const img = document.createElement('img'); img.src = item.blobUrl; img.alt = item.name;
+      mediaWrapper.appendChild(img);
+    } else if(item.type==='video'){
+      const v = document.createElement('video'); v.controls=true; v.src=item.blobUrl; mediaWrapper.appendChild(v);
+    } else if(item.type==='audio'){
+      const a = document.createElement('audio'); a.controls=true; a.src=item.blobUrl; mediaWrapper.appendChild(a);
+    } else if(item.type==='iframe'){
+      const ifr = document.createElement('iframe'); ifr.src=item.blobUrl; mediaWrapper.appendChild(ifr);
+    } else {
+      const link = document.createElement('a'); link.href = item.blobUrl; link.textContent = 'Abrir'; link.target='_blank'; mediaWrapper.appendChild(link);
+    }
+
+    const body = document.createElement('div'); body.className='card-body';
+    const title = document.createElement('p'); title.innerHTML = `<strong>${item.name}</strong> <span class="badge">${item.type}</span>`;
+    const meta = document.createElement('p'); meta.className='meta';
+    meta.textContent = `Nombre fecha: ${item.nameDate || '—'} • Últ. mod.: ${item.lastModified ? new Date(item.lastModified).toLocaleString() : '—'}`;
+    const snippetLocal = generateSnippet(item.blobUrl, item.name, item.ext);
+    const snippetRepo  = generateSnippet(makeRepoPath(item.name), item.name, item.ext);
+
+    const ta = document.createElement('div'); ta.className='snippet'; ta.textContent = snippetRepo; // mostrar repo snippet por defecto
+    const row = document.createElement('div'); row.className='row'; row.style.marginTop='8px';
+    const copyRepo = document.createElement('button'); copyRepo.className='small-btn'; copyRepo.textContent='Copiar /repo';
+    const copyLocal = document.createElement('button'); copyLocal.className='small-btn'; copyLocal.textContent='Copiar local';
+    const previewBtn = document.createElement('button'); previewBtn.className='small-btn'; previewBtn.textContent='Ver';
+    const downloadBtn = document.createElement('a'); downloadBtn.className='small-btn'; downloadBtn.textContent='Descargar'; downloadBtn.href = item.blobUrl; downloadBtn.download = item.name;
+
+    copyRepo.onclick = ()=>{ copyToClipboard(snippetRepo); highlightTemp(copyRepo,'Copiado'); ta.textContent = snippetRepo; miniPreview.innerHTML = snippetRepo; };
+    copyLocal.onclick = ()=>{ copyToClipboard(snippetLocal); highlightTemp(copyLocal,'Copiado'); ta.textContent = snippetLocal; miniPreview.innerHTML = snippetLocal; };
+    previewBtn.onclick = ()=>{ ta.textContent = snippetLocal; miniPreview.innerHTML = ''; miniPreview.appendChild(mediaWrapper.cloneNode(true)); };
+    downloadBtn.onclick = ()=>{ /* natural link works */ };
+
+    row.appendChild(copyRepo); row.appendChild(copyLocal); row.appendChild(previewBtn); row.appendChild(downloadBtn);
+
+    body.appendChild(title); body.appendChild(meta); body.appendChild(ta); body.appendChild(row);
+    card.appendChild(mediaWrapper); card.appendChild(body);
+    return card;
+  }
+
+  function generateSnippet(path, name, ext){
+    const e = ext.toLowerCase();
+    let tag;
+    if(IMG_EXT.includes(e)) tag = `<img src="${path}" alt="${name}" style="width:100%;">`;
+    else if(VID_EXT.includes(e)) tag = `<video controls src="${path}" style="width:100%;"></video>`;
+    else if(AUD_EXT.includes(e)) tag = `<audio controls src="${path}" style="width:100%;"></audio>`;
+    else if(IFR_EXT.includes(e)) tag = `<iframe src="${path}" style="width:100%; height:200px; border:none;"></iframe>`;
+    else tag = `<a href="${path}" target="_blank" style="display:inline-block; width:100%;">Abrir ${name}</a>`;
+    return `<div style="width:100%; margin:1em 0;">\n  ${tag}\n</div>`;
+  }
+
+  function copyToClipboard(text){
+    navigator.clipboard?.writeText(text).then(()=>{}, ()=>{ fallbackCopy(text); });
+  }
+  function fallbackCopy(text){
+    const t = document.createElement('textarea'); t.value=text; document.body.appendChild(t); t.select(); try{document.execCommand('copy')}catch(e){} t.remove();
+  }
+  function highlightTemp(el, txt){
+    const old = el.textContent; el.textContent = txt; setTimeout(()=> el.textContent = old,900);
+  }
+
+  /* ====== RENDER LIST ====== */
+  function refreshUI(filter=''){
+    mediaGrid.innerHTML=''; quickList.innerHTML=''; fileSummary.textContent = `${allItems.length} archivos`;
+    const q = (filter||'').toLowerCase();
+    const visible = allItems.filter(i => i.name.toLowerCase().includes(q) || (i.nameDate||'').includes(q));
+    if(visible.length===0){ mediaGrid.innerHTML = '<div class="muted">Sin resultados</div>'; return; }
+    visible.forEach(item => {
+      const c = createCard(item);
+      mediaGrid.appendChild(c);
+      const li = document.createElement('div'); li.textContent = item.name; quickList.appendChild(li);
+    });
+  }
+
+  /* ====== FILE PROCESSING ====== */
+  function processFile(file){
+    const name = file.name;
+    const ext = extOf(name);
+    const type = typeOf(ext);
+    const blobUrl = URL.createObjectURL(file);
+    const lastModified = file.lastModified || null;
+    const nameDate = extractYearFromName(name);
+    return {name, ext, type, blobUrl, file, repoPath: makeRepoPath(name), lastModified, nameDate};
+  }
+
+  function handleFiles(fileList, append=true){
+    const arr = Array.from(fileList).map(processFile);
+    if(!append) allItems = arr; else allItems = allItems.concat(arr);
+    // remove duplicates by name (keep first)
+    const unique = []; const seen = new Set();
+    for(const it of allItems){ if(!seen.has(it.name)){ unique.push(it); seen.add(it.name);} }
+    allItems = unique;
+    // default sort: by lastModified asc
+    allItems.sort((a,b)=> (a.lastModified||0) - (b.lastModified||0));
+    refreshUI(filterInput.value || globalSearch.value);
+  }
+
+  /* ====== EVENTS ====== */
+  fileInput.addEventListener('change', (e)=> handleFiles(e.target.files, true));
+  folderInput.addEventListener('change', (e)=> handleFiles(e.target.files, true));
+
+  // quick filter
+  filterInput.addEventListener('input', ()=> refreshUI(filterInput.value));
+  globalSearch.addEventListener('input', ()=> refreshUI(globalSearch.value));
+
+  // sort buttons
+  document.getElementById('sortOld').addEventListener('click', ()=> { allItems.sort((a,b)=> (a.lastModified||0) - (b.lastModified||0)); refreshUI(); });
+  document.getElementById('sortNew').addEventListener('click', ()=> { allItems.sort((a,b)=> (b.lastModified||0) - (a.lastModified||0)); refreshUI(); });
+
+  // filter type buttons
+  document.querySelectorAll('[data-filter]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const f = btn.getAttribute('data-filter');
+      if(f==='all') refreshUI();
+      else refreshUI(f);
+    });
+  });
+
+  // manual snippet generator
+  document.getElementById('genManual').addEventListener('click', ()=>{
+    const val = manualInput.value.trim();
+    if(!val) return alert('Escribe nombre o ruta');
+    const name = val.split('/').pop();
+    const ext = extOf(name);
+    const repoPath = val.startsWith('/') ? val : ('/' + name);
+    manualOutput.value = generateSnippet(repoPath, name, ext);
+  });
+
+  // sidebar toggles for mobile
+  document.getElementById('openLeft').addEventListener('click', ()=> leftSidebar.classList.toggle('active'));
+  document.getElementById('openRight').addEventListener('click', ()=> rightSidebar.classList.toggle('active'));
+
+  // initialize demo placeholder (optional)
+  (function seedDemo(){
+    // optional demo: remove or comment out before production
+    // small placeholder card to show layout
+    // no files auto-loaded for privacy/security
+  })();
+
+  /* ====== FILTER BY TYPE OVERRIDE ====== */
+  // override refreshUI to accept type filter argument
+  const originalRefresh = refreshUI;
+  refreshUI = function(filter=''){
+    // if filter matches a known type keyword, use type filtering
+    const t = filter.toLowerCase();
+    if(['image','video','audio','document','iframe'].includes(t)){
+      mediaGrid.innerHTML=''; quickList.innerHTML='';
+      const visible = allItems.filter(i => i.type === t);
+      visible.forEach(item=> mediaGrid.appendChild(createCard(item)));
+      return;
+    }
+    originalRefresh(filter);
+  };
+</script>
+</body>
+</html>

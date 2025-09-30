@@ -1,0 +1,308 @@
+
+
+
+
+
+
+Perfecto — te doy todo listo para generar manifests automáticos y previews Markdown antes de commitear. Te entrego:
+
+1) Un script Node.js (generate-manifest.js) que recorre carpetas, extrae metadata (nombre, ext, ruta relativa, ctime/mtime, año en el nombre), ordena por preferencia y genera /data/*.json. También puede generar previews HTML a partir de archivos Markdown (usa frontmatter si existe).  
+2) package.json con dependencias y scripts (incluye comando para ejecutar manualmente).  
+3) Opcional: hook pre-commit con husky (para ejecutar automáticamente antes de git commit).  
+4) Opcional: workflow GitHub Actions que ejecuta el script en push y commitea el manifest generado (si quieres automatizar en CI).
+
+Sigue las instrucciones y copia los archivos a la raíz de tu repo (o en una carpeta tools/). Si quieres lo subo en partes; aquí tienes todo en un bloque.
+
+1) package.json
+```json
+{
+  "name": "generate-manifests",
+  "version": "1.0.0",
+  "description": "Generador local de manifests JSON y previews HTML para site estático",
+  "main": "generate-manifest.js",
+  "scripts": {
+    "generate": "node generate-manifest.js",
+    "generate:watch": "node generate-manifest.js --watch",
+    "precommit": "node generate-manifest.js"
+  },
+  "dependencies": {
+    "gray-matter": "^4.0.3",
+    "marked": "^5.1.1"
+  },
+  "devDependencies": {
+    "husky": "^8.0.0"
+  }
+}
+```
+
+2) generate-manifest.js (colócalo en la raíz; usa Node 16+)
+```js
+#!/usr/bin/env node
+/**
+ * generate-manifest.js
+ *
+ * Uso:
+ *   node generate-manifest.js                      -> genera manifests para carpetas configuradas
+ *   node generate-manifest.js --watch              -> (simple) re-genera en cambios (poll)
+ *   node generate-manifest.js --dirs=path1,path2   -> analizar dirs concretos
+ *
+ * Qué hace:
+ * - Recorre carpetas (configurables) y crea JSON en /data/{folder}.json
+ * - Extrae: id, name, ext, repoPath (relativo), ctime, mtime, detectedYearInName, localTimestamp (now)
+ * - Opcional: convierte *.md a previews HTML en /previews/{folder}/{file}.html (usa frontmatter si existe)
+ *
+ * Requisitos: npm i gray-matter marked
+ */
+
+const fs = require('fs');
+const path = require('path');
+const matter = require('gray-matter');
+const { marked } = require('marked');
+
+const argv = process.argv.slice(2);
+
+// Configura aquí las carpetas que quieres indexar (relativas a repo root)
+const CONFIG = {
+  scanDirs: [
+    { name: 'home', dir: 'Home' },
+    { name: 'fit', dir: 'fit' },
+    { name: 'pictures', dir: 'pictures' },
+    { name: 'apps', dir: 'apps' }
+  ],
+  outDir: 'data',          // donde se generan los manifests
+  previewsDir: 'previews', // donde generar previews html desde markdown
+  repoBase: '/',           // base path que usarás en los snippets: e.g., '/pictures/foo.jpg'
+  generatePreviewsFromMarkdown: true,
+  sortBy: 'mtime',         // 'mtime' | 'ctime' | 'nameYear' | 'name'
+  watch: argv.includes('--watch')
+};
+
+// tiny helper
+function isHidden(filename){ return filename.startsWith('.') || filename === 'node_modules'; }
+function ensureDirSync(p){ if(!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
+
+function detectYearFromName(name){
+  const m = name.match(/(19|20)\d{2}/);
+  return m ? m[0] : null;
+}
+
+function relRepoPath(filePath){
+  // returns path relative to repo root with repoBase prefix
+  return path.posix.join(CONFIG.repoBase, filePath).replace(/\\/g,'/');
+}
+
+function walkDir(dir){
+  // returns array of absolute file paths (non-recursive filter: skip dotfiles)
+  const out = [];
+  const items = fs.readdirSync(dir, { withFileTypes: true });
+  for(const it of items){
+    if(isHidden(it.name)) continue;
+    const abs = path.join(dir, it.name);
+    if(it.isFile()){
+      out.push(abs);
+    } else if(it.isDirectory()){
+      // recurse
+      out.push(...walkDir(abs));
+    }
+  }
+  return out;
+}
+
+function buildItem(absPath){
+  const stat = fs.statSync(absPath);
+  const name = path.basename(absPath);
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  const relPath = path.relative(process.cwd(), absPath).replace(/\\/g,'/');
+  const item = {
+    id: 'id_' + Buffer.from(relPath).toString('base64').slice(0,8),
+    name,
+    ext,
+    repoPath: relRepoPath(relPath),
+    relPath,
+    ctime: stat.ctimeMs,
+    mtime: stat.mtimeMs,
+    detectedYear: detectYearFromName(name),
+    localGeneratedAt: Date.now()
+  };
+  return item;
+}
+
+function sortItems(items){
+  if(CONFIG.sortBy === 'mtime'){
+    return items.sort((a,b)=> (b.mtime||0) - (a.mtime||0));
+  }
+  if(CONFIG.sortBy === 'ctime'){
+    return items.sort((a,b)=> (b.ctime||0) - (a.ctime||0));
+  }
+  if(CONFIG.sortBy === 'nameYear'){
+    return items.sort((a,b)=>{
+      const ay = parseInt(a.detectedYear||0,10);
+      const by = parseInt(b.detectedYear||0,10);
+      if(ay && by) return by - ay;
+      if(ay) return -1;
+      if(by) return 1;
+      return a.name.localeCompare(b.name);
+    });
+  }
+  return items.sort((a,b)=> a.name.localeCompare(b.name));
+}
+
+function generatePreviewFromMarkdown(absPath, outPreviewPath){
+  const raw = fs.readFileSync(absPath, 'utf8');
+  const parsed = matter(raw);
+  const html = marked(parsed.content);
+  // basic template
+  const title = parsed.data.title || path.basename(absPath);
+  const final = `<!doctype html>
+<meta charset="utf-8">
+<title>${title}</title>
+<style>body{font-family:Inter,Arial,sans-serif;padding:18px;max-width:900px;margin:auto}</style>
+<article>
+<h1>${title}</h1>
+${html}
+</article>`;
+  ensureDirSync(path.dirname(outPreviewPath));
+  fs.writeFileSync(outPreviewPath, final, 'utf8');
+}
+
+function generateForFolder(folderCfg){
+  const folderDir = path.resolve(folderCfg.dir);
+  if(!fs.existsSync(folderDir)){
+    console.warn('No existe carpeta', folderDir, '-> saltando');
+    return;
+  }
+  const files = walkDir(folderDir);
+  const items = files.map(buildItem);
+  const sorted = sortItems(items);
+
+  ensureDirSync(CONFIG.outDir);
+  const outPath = path.join(CONFIG.outDir, folderCfg.name + '.json');
+  fs.writeFileSync(outPath, JSON.stringify(sorted, null, 2), 'utf8');
+  console.log('manifest generado:', outPath, 'items:', sorted.length);
+
+  if(CONFIG.generatePreviewsFromMarkdown){
+    for(const f of files){
+      if((/\.md$/i).test(f)){
+        const rel = path.relative(folderDir, f);
+        // previews/{folder}/{rel}.html
+        const outPreview = path.join(CONFIG.previewsDir, folderCfg.name, rel.replace(/\.md$/i,'.html'));
+        generatePreviewFromMarkdown(f, outPreview);
+        console.log('preview md ->', outPreview);
+      }
+    }
+  }
+}
+
+function run(){
+  ensureDirSync(CONFIG.outDir);
+  for(const f of CONFIG.scanDirs){
+    try{ generateForFolder(f); }catch(e){ console.error('Error folder', f, e); }
+  }
+}
+
+// simple watch (poll)
+if(CONFIG.watch){
+  console.log('Modo watch: vigilando cambios (poll 1s)');
+  let timer=null; run();
+  const chokepath = CONFIG.scanDirs.map(s=>s.dir);
+  fs.watch(process.cwd(), { recursive:true }, (ev, file)=> {
+    clearTimeout(timer); timer = setTimeout(()=> {
+      console.log('cambios detectados, regenerando manifests...');
+      run();
+    }, 600);
+  });
+} else {
+  run();
+}
+```
+
+3) Uso local (pasos)
+- En tu repo crea carpeta tools/ y pega generate-manifest.js ahí, o en raíz.  
+- npm init -y (si no tienes package.json) y pega el package.json contenido arriba o ajusta.  
+- Instala deps:
+  npm install gray-matter marked
+- Ejecuta:
+  node generate-manifest.js
+  -> generará data/home.json, data/fit.json, data/pictures.json, data/apps.json (según tu CONFIG.scanDirs).  
+- Si quieres previews HTML para .md, se crearán en /previews/{folder}/archivo.html
+
+4) Hook pre-commit (opcional)
+- Instala husky si quieres ejecutar el script antes de cada commit:
+  npm install --save-dev husky
+  npx husky install
+  npx husky add .husky/pre-commit "node generate-manifest.js && git add data/*.json previews/** || true"
+- Así, antes del commit se regeneran manifests y se añaden al commit automáticamente.
+
+5) GitHub Actions (opcional) — auto-generate on push and commit changes (requires token)
+Si quieres que CI genere manifests y haga commit al repo automáticamente (usa PAT or GITHUB_TOKEN). Guarda este workflow en .github/workflows/gen-manifest.yml:
+
+```yaml
+name: Generate Manifests
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install deps
+        run: npm ci
+      - name: Run generator
+        run: node generate-manifest.js
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/*.json previews/** || true
+          git commit -m "chore: regen manifests [ci]" || echo "no changes"
+          git push origin HEAD:${{ github.ref_name }}
+        env:
+          CI: true
+```
+
+6) Preview Markdown integrado en tu site
+- El script genera previews HTML en /previews/{folder}/file.html. En tu index (el panel que ya tienes) puedes enlazar a esos previews (repoPath -> /previews/...).  
+- Si prefieres inline preview sin generar archivos, tu index puede fetch() y convertir Markdown con marked() (similar a lo que hace el script). Te dejo un snippet para tu index:
+
+```js
+async function fetchAndRenderMarkdown(url, targetEl){
+  const res = await fetch(url);
+  if(!res.ok) { targetEl.innerHTML = 'No se pudo cargar'; return; }
+  const text = await res.text();
+  const parsed = matter(text);
+  const html = marked(parsed.content);
+  targetEl.innerHTML = `<h1>${parsed.data.title||''}</h1>${html}`;
+}
+```
+
+7) Notas y recomendaciones
+- GitHub Pages sirve archivos estáticos. Con manifests JSON y previews HTML tendrás una "DB estática" que tu front-end puede fetch() y renderizar dinámicamente.  
+- Usa thumbnails en /pictures/thumbs para acelerar carga; el script puede ampliarse para generar thumbnails localmente (pero eso requiere herramientas externas como sharp y tiempo de CPU).  
+- El script usa mtime (última mod) y ctime (creación del archivo en FS). Git no conserva creación original del archivo en commits; si necesitas la hora exacta de la subida a GitHub, usa commit timestamp en vez de ctime.  
+- Si prefieres que la hora tomada sea la del dispositivo al momento de generar (local), ya incluye localGeneratedAt en cada item.
+
+8) Personalización rápida
+- Cambia CONFIG.scanDirs en generate-manifest.js según tus carpetas.  
+- Cambia CONFIG.sortBy = 'nameYear' para priorizar años detectados en el nombre.  
+- Cambia outDir y previewsDir si quieres otro destino.
+
+Si quieres, hago esto por ti según tu repo real:
+- Ajusto CONFIG.scanDirs a tus rutas exactas (Home, fit, pictures, apps).  
+- Te preparo package.json y .husky/pre-commit listo para pegar.  
+- También puedo adaptar el generator para crear thumbnails con sharp (si quieres aprender a usarlo localmente).
+
+¿Quieres que te entregue:
+A) solo generate-manifest.js listo con CONFIG ya apuntando a Home/ fit/ pictures/ apps/ y package.json; o  
+B) además .husky precommit y la GitHub Action workflow completo listo para pegar?
+
+Dime cuál opción y lo dejo listo para copiar.

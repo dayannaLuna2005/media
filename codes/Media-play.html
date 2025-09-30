@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Galería Multimedia</title>
+  <style>
+    body { font-family: sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { text-align: center; }
+    .grid { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; }
+    .card { width: 280px; background: #f0f0f0; padding: 12px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+    img, video, audio { width: 100%; border-radius: 6px; }
+    .caption { margin-top: 8px; font-size: 14px; color: #333; word-break: break-word; }
+  </style>
+</head>
+<body>
+  <h1>🎬 Galería Multimedia desde GitHub</h1>
+  <div id="grid" class="grid"></div>
+
+  <script>
+    const basePath = 'media/';
+    const jsonFile = basePath + 'list.json';
+
+    async function cargarLista() {
+      try {
+        const res = await fetch(jsonFile, { cache: 'no-cache' });
+        if (!res.ok) throw new Error('No se pudo cargar list.json');
+        const archivos = await res.json();
+        mostrarGalería(archivos);
+      } catch (err) {
+        document.getElementById('grid').innerHTML = `<p>Error: ${err.message}</p>`;
+      }
+    }
+
+    function mostrarGalería(archivos) {
+      const grid = document.getElementById('grid');
+      grid.innerHTML = '';
+
+      archivos.forEach(nombre => {
+        const ext = nombre.split('.').pop().toLowerCase();
+        const ruta = basePath + nombre;
+        const card = document.createElement('div');
+        card.className = 'card';
+
+        if (['jpg','jpeg','png','gif','webp','svg'].includes(ext)) {
+          const img = document.createElement('img');
+          img.src = ruta;
+          img.alt = nombre;
+          card.appendChild(img);
+        } else if (['mp4','webm','ogg'].includes(ext)) {
+          const video = document.createElement('video');
+          video.src = ruta;
+          video.controls = true;
+          video.preload = 'metadata';
+          card.appendChild(video);
+        } else if (['mp3','wav','ogg'].includes(ext)) {
+          const audio = document.createElement('audio');
+          audio.src = ruta;
+          audio.controls = true;
+          card.appendChild(audio);
+        } else {
+          const p = document.createElement('p');
+          p.textContent = 'Formato no soportado: ' + nombre;
+          card.appendChild(p);
+        }
+
+        const caption = document.createElement('div');
+        caption.className = 'caption';
+        caption.textContent = nombre;
+        card.appendChild(caption);
+
+        grid.appendChild(card);
+      });
+    }
+
+    cargarLista();
+  </script>
+</body>
+</html>

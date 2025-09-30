@@ -1,0 +1,79 @@
+
+
+[
+  {"id":"p1","title":"Mi rutina","repoPath":"/fit/p1.html","thumb":"/pictures/thumb-p1.jpg","date":"2023-06-01","tags":["fitness","diario"]},
+  {"id":"p2","title":"Rutina 2018","repoPath":"/fit/p2.html","thumb":"/pictures/thumb-p2.jpg","date":"2018-07-10","tags":["old","fit"]}
+]
+
+
+
+
+<<!-- snippet -->
+<div id="list"></div>
+<div id="pager"></div>
+
+				
+				<script> 
+				
+				//1
+				function onHashChange(){
+  const hash = location.hash.slice(1) || '/home';
+  const [path, id] = hash.split('/').filter(Boolean);
+  if(!path) return showHome();
+  if(path === 'fit') return showList('fit');
+  if(path === 'pictures') return showList('pictures');
+  if(path === 'post' && id) return showPost(id);
+}
+window.addEventListener('hashchange', onHashChange);
+onHashChange();
+
+				async function loadManifest(kind){
+  const res = await fetch(`/data/${kind}.json`);
+  const list = await res.json();
+  return list;
+}
+
+function paginate(list, page=1, per=12){
+  const start=(page-1)*per; return {page, per, total:list.length, items: list.slice(start,start+per)};
+}
+
+async function showList(kind, page=1){
+  const manifest = await loadManifest(kind);
+  const {items,total} = paginate(manifest,page);
+  renderCards(items);
+  renderPager(total, page, per=12);
+}
+
+		function downloadJSON(obj, name='manifest.json'){
+  const url = URL.createObjectURL(new Blob([JSON.stringify(obj, null, 2)],{type:'application/json'}));
+  const a = document.createElement('a'); a.href=url; a.download=name; a.click(); URL.revokeObjectURL(url);
+}
+		
+				
+				</script>
+<script>
+const per=8;
+async function getManifest(kind='pictures'){
+  // intenta cache localStorage primero
+  const cached = localStorage.getItem(kind+'-manifest');
+  if(cached) return JSON.parse(cached);
+  const res = await fetch('/data/'+kind+'.json');
+  const json = await res.json();
+  localStorage.setItem(kind+'-manifest', JSON.stringify(json));
+  return json;
+}
+
+function renderCards(items){
+  const list = document.getElementById('list'); list.innerHTML='';
+  items.forEach(it=>{
+    const div = document.createElement('div');
+    div.innerHTML = `<img loading="lazy" src="${it.thumb}" style="width:100%"><h4>${it.title}</h4><p>${it.date}</p>
+      <button onclick="copy('/${it.path}')">Copiar ruta</button>
+      <button onclick="editItem('${it.id}')">Editar</button>`;
+    list.appendChild(div);
+  });
+}
+
+function copy(text){navigator.clipboard.writeText(text)}
+// pager, editItem, saveToLocalStorage...
+</script>
